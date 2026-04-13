@@ -14,11 +14,24 @@ const wss = new WebSocketServer({ server, path: '/ws/video' });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
+// ─── Windows'ta yt-dlp yolu ────────────────────────────────────────────────
+// Node.js farklı PATH kullanır; python -m yt_dlp her zaman çalışır.
+// Önce yt-dlp binary'yi dene, olmazsa python -m yt_dlp kullan.
+function ytdlpCmd() {
+  return process.platform === 'win32'
+    ? { cmd: 'python', prefix: ['-m', 'yt_dlp'] }
+    : { cmd: 'yt-dlp', prefix: [] };
+}
+
+function spawnYtDlp(args) {
+  const { cmd, prefix } = ytdlpCmd();
+  return spawn(cmd, [...prefix, ...args], { shell: true });
+}
+
 // ─── Bağımlılık Kontrolü ───────────────────────────────────────────────────
-// ffmpeg: -version (tek tire), yt-dlp: --version (çift tire)
 function checkDependency(cmd, args) {
   return new Promise((resolve) => {
-    const proc = spawn(cmd, args);
+    const proc = spawn(cmd, args, { shell: true });
     proc.on('close', (code) => resolve(code === 0));
     proc.on('error', () => resolve(false));
   });
@@ -26,19 +39,21 @@ function checkDependency(cmd, args) {
 
 app.get('/api/check', async (req, res) => {
   const [ytdlp, ffmpeg] = await Promise.all([
-    checkDependency('yt-dlp', ['--version']),
-    checkDependency('ffmpeg', ['-version']),   // ffmpeg tek tire kullanır
+    // Windows'ta python -m yt_dlp ile kontrol et
+    process.platform === 'win32'
+      ? checkDependency('python', ['-m', 'yt_dlp', '--version'])
+      : checkDependency('yt-dlp', ['--version']),
+    checkDependency('ffmpeg', ['-version']),
   ]);
   res.json({ ytdlp, ffmpeg, ok: ytdlp && ffmpeg });
 });
 
 // ─── Ses Proxy ─────────────────────────────────────────────────────────────
-// <audio> elementi Tesla'da çalışır, yt-dlp ile ses URL'sini alıp proxy'leriz
 app.get('/api/audio', (req, res) => {
   const youtubeUrl = req.query.url;
   if (!youtubeUrl) return res.status(400).json({ error: 'URL eksik' });
 
-  const ytDlp = spawn('yt-dlp', [
+  const ytDlp = spawnYtDlp([
     '-f', 'bestaudio[ext=m4a]/bestaudio',
     '--get-url',
     '--no-playlist',
@@ -87,12 +102,12 @@ wss.on('connection', (ws, req) => {
   let ffmpegProc = null;
 
   // Adım 1: yt-dlp ile video stream URL'si al
-  const ytDlp = spawn('yt-dlp', [
+  const ytDlp = spawnYtDlp([
     '-f', 'best[height<=480][ext=mp4]/best[height<=480]/best',
     '--get-url',
     '--no-playlist',
     youtubeUrl,
-  ], { shell: true });
+  ]);
 
   let videoUrl = '';
   let ytDlpErr = '';
