@@ -15,9 +15,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
 // ─── Bağımlılık Kontrolü ───────────────────────────────────────────────────
-function checkDependency(cmd) {
+// ffmpeg: -version (tek tire), yt-dlp: --version (çift tire)
+function checkDependency(cmd, args) {
   return new Promise((resolve) => {
-    const proc = spawn(cmd, ['--version']);
+    const proc = spawn(cmd, args);
     proc.on('close', (code) => resolve(code === 0));
     proc.on('error', () => resolve(false));
   });
@@ -25,8 +26,8 @@ function checkDependency(cmd) {
 
 app.get('/api/check', async (req, res) => {
   const [ytdlp, ffmpeg] = await Promise.all([
-    checkDependency('yt-dlp'),
-    checkDependency('ffmpeg'),
+    checkDependency('yt-dlp', ['--version']),
+    checkDependency('ffmpeg', ['-version']),   // ffmpeg tek tire kullanır
   ]);
   res.json({ ytdlp, ffmpeg, ok: ytdlp && ffmpeg });
 });
