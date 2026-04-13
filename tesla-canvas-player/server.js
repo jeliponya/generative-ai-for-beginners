@@ -92,17 +92,29 @@ wss.on('connection', (ws, req) => {
     '--get-url',
     '--no-playlist',
     youtubeUrl,
-  ]);
+  ], { shell: true });
 
   let videoUrl = '';
+  let ytDlpErr = '';
   ytDlp.stdout.on('data', (d) => (videoUrl += d.toString()));
-  ytDlp.stderr.on('data', () => {});
+  ytDlp.stderr.on('data', (d) => (ytDlpErr += d.toString()));
+
+  ytDlp.on('error', (err) => {
+    console.error('[!] yt-dlp bulunamadı:', err.message);
+    safeSend(ws, JSON.stringify({ type: 'error', msg: 'yt-dlp bulunamadı. Kurun: pip install yt-dlp' }));
+    ws.close();
+  });
 
   ytDlp.on('close', (code) => {
     videoUrl = videoUrl.trim().split('\n')[0];
 
     if (code !== 0 || !videoUrl) {
-      safeSend(ws, JSON.stringify({ type: 'error', msg: 'Video URL alınamadı' }));
+      console.error(`[!] yt-dlp hata kodu: ${code}`);
+      console.error(`[!] yt-dlp çıktısı: ${ytDlpErr.slice(0, 500)}`);
+      const msg = ytDlpErr.includes('not found') || ytDlpErr.includes('not recognized')
+        ? 'yt-dlp bulunamadı. CMD\'de: pip install yt-dlp'
+        : `Video URL alınamadı (kod: ${code})`;
+      safeSend(ws, JSON.stringify({ type: 'error', msg }));
       return ws.close();
     }
 
