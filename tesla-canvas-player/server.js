@@ -1,6 +1,6 @@
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const http = require('http');
 const https = require('https');
 const path = require('path');
@@ -14,18 +14,41 @@ const wss = new WebSocketServer({ server, path: '/ws/video' });
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// ─── Windows'ta yt-dlp yolu ────────────────────────────────────────────────
-// Node.js farklı PATH kullanır; python -m yt_dlp her zaman çalışır.
-// Önce yt-dlp binary'yi dene, olmazsa python -m yt_dlp kullan.
-function ytdlpCmd() {
-  return process.platform === 'win32'
-    ? { cmd: 'python', prefix: ['-m', 'yt_dlp'] }
-    : { cmd: 'yt-dlp', prefix: [] };
+// ─── yt-dlp Otomatik Keşif ─────────────────────────────────────────────────
+// Node.js farklı PATH kullanabilir. Startup'ta çalışan komutu bulup kaydediyoruz.
+let YTDLP = null;
+
+function discoverYtDlp() {
+  const candidates = [
+    { cmd: 'yt-dlp',  args: [],             test: 'yt-dlp --version' },
+    { cmd: 'python',  args: ['-m','yt_dlp'], test: 'python -m yt_dlp --version' },
+    { cmd: 'python3', args: ['-m','yt_dlp'], test: 'python3 -m yt_dlp --version' },
+    // pip ile kurulunca Scripts klasörüne gider, tam yolu deneyelim
+    { cmd: `${process.env.LOCALAPPDATA}\\Programs\\Python\\Python312\\Scripts\\yt-dlp.exe`, args: [], test: null },
+    { cmd: `${process.env.LOCALAPPDATA}\\Programs\\Python\\Python311\\Scripts\\yt-dlp.exe`, args: [], test: null },
+    { cmd: `${process.env.APPDATA}\\Python\\Scripts\\yt-dlp.exe`, args: [], test: null },
+  ];
+
+  for (const c of candidates) {
+    try {
+      if (c.test) {
+        execSync(c.test, { stdio: 'ignore', shell: true, timeout: 5000 });
+      } else {
+        execSync(`"${c.cmd}" --version`, { stdio: 'ignore', shell: true, timeout: 5000 });
+      }
+      console.log(`[yt-dlp] Bulundu → ${c.cmd} ${c.args.join(' ')}`);
+      return c;
+    } catch { /* dene */ }
+  }
+
+  console.warn('[!] yt-dlp bulunamadı. CMD\'de çalıştır: pip install yt-dlp');
+  return { cmd: 'yt-dlp', args: [] }; // fallback
 }
 
+YTDLP = discoverYtDlp();
+
 function spawnYtDlp(args) {
-  const { cmd, prefix } = ytdlpCmd();
-  return spawn(cmd, [...prefix, ...args], { shell: true });
+  return spawn(YTDLP.cmd, [...YTDLP.args, ...args], { shell: true });
 }
 
 // ─── Bağımlılık Kontrolü ───────────────────────────────────────────────────
